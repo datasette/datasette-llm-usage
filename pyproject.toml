@@ -1,0 +1,36 @@
+[project]
+name = "datasette-llm-usage"
+version = "0.1"
+description = "Track usage of LLM tokens in a SQLite table"
+readme = "README.md"
+authors = [{name = "Simon Willison"}]
+license = {text = "Apache-2.0"}
+classifiers=[
+    "Framework :: Datasette",
+    "License :: OSI Approved :: Apache Software License"
+]
+requires-python = ">=3.9"
+dependencies = [
+    "datasette>=1.0a0",
+    "llm>=0.19",
+    "sqlite-migrate"
+]
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[project.urls]
+Homepage = "https://github.com/datasette/datasette-llm-usage"
+Changelog = "https://github.com/datasette/datasette-llm-usage/releases"
+Issues = "https://github.com/datasette/datasette-llm-usage/issues"
+CI = "https://github.com/datasette/datasette-llm-usage/actions"
+
+[project.entry-points.datasette]
+llm_usage = "datasette_llm_usage"
+
+[project.optional-dependencies]
+test = ["pytest", "pytest-asyncio"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "strict"
