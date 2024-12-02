@@ -90,13 +90,9 @@ The plugin includes pricing information for various models including:
 
 - Gemini models (1.5-flash, 1.5-pro)
 - Claude models (3.5-sonnet, 3-opus, 3-haiku)
-- GPT models (gpt-4o, gpt-4o-mini)
-- Anthropic models (o1-preview, o1-mini)
+- GPT models (gpt-4o, gpt-4o-mini, o1-preview, o1-mini)
 
-Usage is tracked in credits where 1 million credits = 1 cent. Different models have different input and output token costs.
-
-If no database is specified, it will use Datasette's internal database.
-
+Different models have different input and output token costs.
 
 ## Development
 
