@@ -1,84 +1,74 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from datasette import hookimpl, Response
+import json
 from sqlite_migrate import Migrations
 from sqlite_utils import Database
 import time
 from typing import Optional
 import llm
+from .pricing import calculate_costs
 
 
 @dataclass
-class Price:
-    name: str
+class ModelAllowance:
     model_id: str
-    size_limit: Optional[int]
-    input_token_cost_10000th_cent: int
-    output_token_cost_10000th_cent: int
-
-    def cost_in_cents(self, input_tokens: int, output_tokens: int):
-        return self.cost_in_credits(input_tokens, output_tokens) / 1000000
-
-    def cost_in_credits(self, input_tokens: int, output_tokens: int):
-        return (
-            input_tokens * self.input_token_cost_10000th_cent
-            + output_tokens * self.output_token_cost_10000th_cent
-        )
+    provider: str
+    credits_remaining: int
+    tokens_remaining: int
 
 
-PRICES = [
-    Price("gemini-1.5-flash", "gemini-1.5-flash", 128000, 7, 30),
-    Price("gemini-1.5-flash-128k", "gemini-1.5-flash", None, 15, 60),
-    Price("gemini-1.5-flash-8b", "gemini-1.5-flash-8b", 128000, 3, 15),
-    Price("gemini-1.5-flash-8b-128k", "gemini-1.5-flash-8b", None, 7, 30),
-    Price("gemini-1.5-pro", "gemini-1.5-pro", 128000, 125, 500),
-    Price("gemini-1.5-pro-128k", "gemini-1.5-pro", None, 250, 1000),
-    Price("claude-3.5-sonnet", "claude-3.5-sonnet", None, 300, 1500),
-    Price("claude-3-opus", "claude-3-opus", None, 1500, 7500),
-    Price("claude-3-haiku", "claude-3-haiku", None, 25, 125),
-    Price("claude-3.5-haiku", "claude-3.5-haiku", None, 100, 500),
-    Price("gpt-4o", "gpt-4o", None, 250, 1000),
-    Price("gpt-4o-mini", "gpt-4o-mini", None, 15, 60),
-    Price("o1-preview", "o1-preview", None, 1500, 6000),
-    Price("o1-mini", "o1-mini", None, 300, 1200),
-    # This is just used by tests:
-    Price("async-mock", "async-mock", 5, 100, 1000),
-    Price("async-mock_gt_5", "async-mock", None, 120, 1200),
-]
-
-
-migration = Migrations("datasette_llm_usage")
+migration = Migrations("datasette-llm-usage")
 
 
 @migration()
-def create_usage_table(db):
+def create_tables(db):
+    db["_llm_usage_provider"].create(
+        {
+            "id": int,
+            "name": str,
+        },
+        pk="id",
+    ).create_index(["name"], unique=True)
+    db["_llm_usage_model"].create(
+        {
+            "id": int,
+            "name": str,
+            "provider_id": int,
+            "tiers": str,
+        },
+        pk="id",
+        foreign_keys=(("provider_id", "_llm_usage_provider", "id"),),
+    ).create_index(["name"], unique=True)
     db["_llm_usage"].create(
         {
             "id": int,
             "created": int,
-            "model": str,
+            "provider_id": int,
+            "model_id": int,
             "purpose": str,
             "actor_id": str,
             "input_tokens": int,
             "output_tokens": int,
+            "credits": int,
         },
         pk="id",
+        foreign_keys=(
+            ("provider_id", "_llm_usage_provider", "id"),
+            ("model_id", "_llm_usage_model", "id"),
+        ),
     )
-
-
-@migration()
-def create_allowance_table(db):
-    db["_llm_allowance"].create(
+    db["_llm_usage_allowance"].create(
         {
-            "id": int,
-            "created": int,
+            "provider_id": int,
+            "purpose": str,
             "credits_remaining": int,
-            "daily_reset": bool,
-            "daily_reset_amount": int,
-            "purpose": str,  # optional
+            "last_reset_timestamp": int,
+            "daily_reset_amount": int,  # null = no reset
         },
-        pk="id",
-        not_null=("id", "created", "credits_remaining"),
+        pk=("provider_id", "purpose"),
+        not_null=("provider_id", "purpose", "credits_remaining"),
+        foreign_keys=(("provider_id", "_llm_usage_provider", "id"),),
     )
 
 
@@ -86,10 +76,23 @@ async def llm_usage_simple_prompt(datasette, request):
     if not request.actor:
         return Response.text("Not logged in", status=403)
     llm = LLM(datasette)
+    models = await llm.get_async_models()
     prompt = request.args.get("prompt")
     if not prompt:
-        return Response.html("<form><input name=prompt><button>Submit</button></form>")
-    model = llm.get_async_model("gpt-4o-mini", purpose="simple_prompt")
+        return Response.html(
+            """
+            <form><input name=prompt>
+            <select name="model">{options}</select>
+            <button>Submit</button></form>
+        """.format(
+                options="\n".join(
+                    '<option value="{}">{}</option>'.format(m.model.model_id, m.model)
+                    for m in models
+                )
+            )
+        )
+    model_id = request.args.get("model") or "gpt-4o-mini"
+    model = llm.get_async_model(model_id, purpose="simple_prompt")
     response = await model.prompt(
         request.args.get("prompt"), actor_id=request.actor["id"]
     )
@@ -114,12 +117,78 @@ def register_routes():
 @hookimpl
 def startup(datasette):
     async def inner():
-        await get_database(datasette, migrate=True)
+        await get_database(datasette, migrate=True, populate=True)
 
     return inner
 
 
-async def get_database(datasette, migrate=False):
+def make_populate(datasette):
+    def inner(conn):
+        db = Database(conn)
+        # Create or update records for each model
+        plugin_config = datasette.plugin_config("datasette-llm-usage") or {}
+        models = plugin_config.get("models") or []
+        allowances = plugin_config.get("allowances") or []
+        if not models:
+            return
+        for model in models:
+            # provider: gemini
+            # model_id: gemini-1.5-pro
+            # tiers:
+            # - max_tokens: 128000
+            #     input_cost: 125
+            #     output_cost: 500
+            # - max_tokens: null
+            #     input_cost: 250
+            #     output_cost: 1000
+            provider = model["provider"]
+            model_id = model["model_id"]
+            tiers = model["tiers"]
+            provider_id = db["_llm_usage_provider"].lookup({"name": provider})
+            sql = """
+            INSERT INTO _llm_usage_model (name, provider_id, tiers)
+            VALUES (:name, :provider_id, :tiers)
+            ON CONFLICT (name) DO UPDATE SET
+                provider_id = excluded.provider_id,
+                tiers = excluded.tiers
+            """
+            db.execute(
+                sql,
+                {
+                    "name": model_id,
+                    "provider_id": provider_id,
+                    "tiers": json.dumps(tiers),
+                },
+            )
+        for allowance in allowances:
+            # - provider: gemini
+            #   daily_reset_amount: 100000
+            provider_id = db["_llm_usage_provider"].lookup(
+                {"name": allowance["provider"]}
+            )
+            purpose = allowance.get("purpose") or ""
+            daily_reset_amount = allowance["daily_reset_amount"]
+            sql = """
+            INSERT INTO _llm_usage_allowance (provider_id, purpose, credits_remaining, last_reset_timestamp, daily_reset_amount)
+            VALUES (:provider_id, :purpose, :credits_remaining, :last_reset_timestamp, :daily_reset_amount)
+            ON CONFLICT (provider_id, purpose) DO UPDATE SET
+                credits_remaining = excluded.credits_remaining,
+                last_reset_timestamp = excluded.last_reset_timestamp,
+                daily_reset_amount = excluded.daily_reset_amount
+            """
+            params = {
+                "provider_id": provider_id,
+                "purpose": purpose,
+                "credits_remaining": daily_reset_amount,
+                "last_reset_timestamp": int(time.time()),
+                "daily_reset_amount": daily_reset_amount,
+            }
+            db.execute(sql, params)
+
+    return inner
+
+
+async def get_database(datasette, migrate=False, populate=False):
     plugin_config = datasette.plugin_config("datasette-llm-usage") or {}
     db_name = plugin_config.get("database")
     if db_name:
@@ -128,32 +197,47 @@ async def get_database(datasette, migrate=False):
         db = datasette.get_internal_database()
     if migrate:
         await db.execute_write_fn(lambda conn: migration.apply(Database(conn)))
+    if populate:
+        await db.execute_write_fn(make_populate(datasette))
     return db
 
 
 async def subtract_credits(db, purpose, model_id, input_tokens, output_tokens):
-    price = next(p for p in PRICES if p.model_id == model_id)
-    cost = price.cost_in_credits(input_tokens, output_tokens)
-    id = None
-    print(
-        "Subtract credits", type(purpose), model_id, input_tokens, output_tokens, cost
+    # Calculate cost using the new pricing module
+    input_cost, output_cost = await calculate_costs(
+        db, model_id, input_tokens, output_tokens
     )
+    cost = int((input_cost + output_cost) * 1_000_000)  # Convert to credits
+
+    # Lookup the model_db_id and provider_db_id for this model_id
+    row = (
+        await db.execute(
+            "select id, provider_id from _llm_usage_model where name = :name",
+            {"name": model_id},
+        )
+    ).first()
+    if not row:
+        raise ValueError("Unknown model_id: {}".format(model_id))
+    provider_db_id = row["provider_id"]
+    model_db_id = row["id"]
+    row_purpose = ""
     if purpose:
         # Is there a purpose row?
-        sql = "select id from _llm_allowance where purpose = :purpose"
-        row = (await db.execute(sql, {"purpose": purpose})).first()
-        print("first attempt row=", row)
-        if row:
-            id = row["id"]
-    else:
-        # use the purpose is null row instead
-        sql = "select id from _llm_allowance where purpose is null"
-        id = (await db.execute(sql)).single_value()
-    await db.execute(
-        "update _llm_allowance set credits_remaining = credits_remaining - :cost where id = :id",
+        sql = "select * from _llm_usage_allowance where provider_id = :provider_id and purpose = :purpose"
+        if (
+            await db.execute(sql, {"provider_id": provider_db_id, "purpose": purpose})
+        ).first():
+            row_purpose = purpose
+    await db.execute_write(
+        """
+        update _llm_usage_allowance
+        set credits_remaining = credits_remaining - :cost
+        where provider_id = :provider_id and purpose = :purpose
+        """,
         {
+            "provider_id": provider_db_id,
+            "purpose": row_purpose,
             "cost": cost,
-            "id": id,
         },
     )
 
@@ -179,21 +263,37 @@ class WrappedModel:
             input_tokens = usage.input
             output_tokens = usage.output
             db = await get_database(self.datasette)
+            row = (
+                await db.execute(
+                    "select id, provider_id from _llm_usage_model where name = :name",
+                    {"name": self.model.model_id},
+                )
+            ).first()
+            provider_id = row["provider_id"]
+            model_id = row["id"]
+
+            # Calculate credits using the new pricing module
+            input_cost, output_cost = await calculate_costs(
+                db, self.model.model_id, input_tokens, output_tokens
+            )
+            credits = int((input_cost + output_cost) * 1_000_000)  # Convert to credits
+
             await db.execute_write(
                 """
-            insert into _llm_usage (created, model, purpose, actor_id, input_tokens, output_tokens)
-            values (:created, :model, {purpose}, {actor_id}, :input_tokens, :output_tokens)
+            insert into _llm_usage (created, provider_id, model_id, purpose, actor_id, input_tokens, output_tokens, credits)
+            values (:created, :provider_id, :model_id, :purpose, {actor_id}, :input_tokens, :output_tokens, :credits)
             """.format(
                     actor_id=":actor_id" if actor_id else "null",
-                    purpose=":purpose" if self.purpose else "null",
                 ),
                 {
                     "created": int(time.time() * 1000),
-                    "model": self.model.model_id,
+                    "provider_id": provider_id,
+                    "model_id": model_id,
                     "purpose": self.purpose,
                     "actor_id": actor_id,
                     "input_tokens": input_tokens,
                     "output_tokens": output_tokens,
+                    "credits": credits,
                 },
             )
             # Subtract the appropriate amount of credits from the allowance
@@ -212,21 +312,31 @@ class LLM:
     def __init__(self, datasette):
         self.datasette = datasette
 
-    def get_async_models(self):
-        return [WrappedModel(model, self.datasette) for model in llm.get_async_models()]
+    async def get_async_models(self):
+        models = [
+            WrappedModel(model, self.datasette) for model in llm.get_async_models()
+        ]
+        # Filter for the ones in the database
+        db = await get_database(self.datasette)
+        model_ids = [
+            row["name"] for row in await db.execute("select name from _llm_usage_model")
+        ]
+        return [model for model in models if model.model.model_id in model_ids]
 
     def get_async_model(self, model_id=None, purpose=None):
         return WrappedModel(
             llm.get_async_model(model_id), self.datasette, purpose=purpose
         )
 
+    async def get_model_allowances(self):
+        # Returns list of ModelAllowance objects
+        pass
+
     async def has_allowance(self, purpose: Optional[str] = None):
         db = self.datasette.get_database()
         if purpose:
             #  First check allowance for this purpose
-            sql = (
-                "select credits_remaining from _llm_allowance where purpose = :purpose"
-            )
+            sql = "select credits_remaining from _llm_usage_allowance where purpose = :purpose"
             credits_remaining = (
                 await db.execute(sql, {"purpose": purpose})
             ).single_value()
@@ -234,6 +344,6 @@ class LLM:
                 return True
         # Check general allowance instead
         credits_remaining = await db.execute(
-            "select credits_remaining from _llm_allowance where purpose is null",
+            "select credits_remaining from _llm_usage_allowance where purpose = ''"
         ).single_value()
         return credits_remaining > 0
