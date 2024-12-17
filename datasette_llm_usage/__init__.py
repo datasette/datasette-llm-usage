@@ -76,34 +76,33 @@ async def llm_usage_simple_prompt(datasette, request):
     if not request.actor:
         return Response.text("Not logged in", status=403)
     llm = LLM(datasette)
-    models = await llm.get_async_models()
-    prompt = request.args.get("prompt")
-    if not prompt:
-        return Response.html(
-            """
-            <form><input name=prompt>
-            <select name="model">{options}</select>
-            <button>Submit</button></form>
-        """.format(
-                options="\n".join(
-                    '<option value="{}">{}</option>'.format(m.model.model_id, m.model)
-                    for m in models
-                )
-            )
+    post_data = await request.post_vars()
+    prompt = post_data.get("prompt")
+    allowances = await llm.get_model_allowances()
+    context = {
+        "allowances": allowances,
+    }
+
+    if prompt:
+        model_id = post_data.get("model") or "gpt-4o-mini"
+        model = llm.get_async_model(model_id, purpose="simple_prompt")
+        response = await model.prompt(prompt, actor_id=request.actor["id"])
+        text = await response.text()
+        usage = await response.usage()
+        context.update(
+            {
+                "prompt": prompt,
+                "model_id": model_id,
+                "prompt_response": text,
+                "input_tokens": usage.input,
+                "output_tokens": usage.output,
+            }
         )
-    model_id = request.args.get("model") or "gpt-4o-mini"
-    model = llm.get_async_model(model_id, purpose="simple_prompt")
-    response = await model.prompt(
-        request.args.get("prompt"), actor_id=request.actor["id"]
-    )
-    text = await response.text()
-    usage = await response.usage()
-    return Response.json(
-        {
-            "text": text,
-            "input_tokens": usage.input,
-            "output_tokens": usage.output,
-        }
+
+    return Response.html(
+        await datasette.render_template(
+            "llm_usage_single_prompt.html", context, request=request
+        )
     )
 
 
@@ -330,10 +329,45 @@ class LLM:
 
     async def get_model_allowances(self):
         # Returns list of ModelAllowance objects
-        pass
+        # class ModelAllowance:
+        #     model_id: - the name from _llm_usage_model
+        #     provider: - the name from _llm_usage_provider
+        #     credits_remaining: int - from _llm_usage_allowance
+        #     tokens_remaining: int - calculated based on lowest pricing tier
+        db = await get_database(self.datasette)
+        rows = [
+            dict(row)
+            for row in (
+                await db.execute(
+                    """
+            select
+                _llm_usage_model.name as model_id,
+                _llm_usage_provider.name as provider,
+                _llm_usage_allowance.credits_remaining,
+                _llm_usage_model.tiers
+            from _llm_usage_model
+            join _llm_usage_provider on _llm_usage_model.provider_id = _llm_usage_provider.id
+            join _llm_usage_allowance on _llm_usage_provider.id = _llm_usage_allowance.provider_id
+            """
+                )
+            ).rows
+        ]
+        # Just consider input tokens price of first tier for the moment
+        available = []
+        for row in rows:
+            tiers = json.loads(row.pop("tiers"))
+            input_cost = tiers[0]["input_cost"]
+            row["tokens_remaining"] = row["credits_remaining"] // input_cost
+            # Is the model plugin installed?
+            try:
+                llm.get_async_model(row["model_id"])
+                available.append(ModelAllowance(**row))
+            except llm.UnknownModelError:
+                pass
+        return available
 
     async def has_allowance(self, purpose: Optional[str] = None):
-        db = self.datasette.get_database()
+        db = await get_database(self.datasette)
         if purpose:
             #  First check allowance for this purpose
             sql = "select credits_remaining from _llm_usage_allowance where purpose = :purpose"

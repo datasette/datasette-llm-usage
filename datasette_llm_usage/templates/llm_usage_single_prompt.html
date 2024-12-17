@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}Run a single prompt{% endblock %}
+
+{% block content %}
+<h1>Run a single prompt</h1>
+<form method="post">
+  <input type="text" name="prompt">
+  <select name="model">
+    {% for allowance in allowances %}
+      <option
+        {% if model_id == allowance.model_id %}selected{% endif %}
+        value="{{ allowance.model_id }}"
+        {% if allowance.tokens_remaining <= 0 %}disabled{% endif %}
+      >
+        {{ allowance.model_id }} - {{ "{:,}".format(allowance.tokens_remaining) }} tokens remaining
+      </option>
+    {% endfor %}
+  </select>
+  <button type="submit">Submit</button>
+  <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
+</form>
+
+{% if prompt_response %}
+<style>
+  dl {
+    margin-top: 2em;
+  }
+  dt {
+    font-weight: bold;
+  }
+  dd {
+    margin-left: 1em;
+  }
+  dl pre {
+    white-space: pre-wrap;
+  }
+</style>
+<dl>
+  <dt>Model</dt>
+  <dd>{{ model_id }}</dd>
+  <dt>Prompt</dt>
+  <dd>{{ prompt }}</dd>
+  <dt>Response</dt>
+  <dd><pre>{{ prompt_response }}</pre></dd>
+  <dt>Input tokens</dt>
+  <dd>{{ input_tokens }}</dd>
+  <dt>Output tokens</dt>
+  <dd>{{ output_tokens }}</dd>
+</dl>
+{% endif %}
+
+{% if error %}
+{% endif %}
+{% endblock %}
