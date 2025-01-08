@@ -381,3 +381,26 @@ class LLM:
             "select credits_remaining from _llm_usage_allowance where purpose = ''"
         ).single_value()
         return credits_remaining > 0
+
+async def llm_usage_credits(datasette, request):
+    llm = LLM(datasette)
+    allowances = await llm.get_model_allowances()
+    providers_dict = {}
+    for allowance in allowances:
+        providers_dict.setdefault(allowance.provider, []).append(allowance)
+    providers = [
+        {"provider": key, "models": value} for key, value in providers_dict.items()
+    ]
+    providers.sort(key=lambda x: x["provider"])
+    return Response.html(
+        await datasette.render_template(
+            "llm_usage_credits.html", {"providers": providers}, request=request
+        )
+    )
+
+
+@hookimpl
+def register_routes():
+    return [
+        (r"^/-/llm-usage-credits$", llm_usage_credits),
+    ]

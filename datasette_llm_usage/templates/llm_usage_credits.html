@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}LLM credits{% endblock %}
+
+{% block content %}
+<h1>LLM credits</h1>
+
+<style>
+  table {
+    border-collapse: collapse;
+  }
+  table th {
+    font-weight: bold;
+  }
+  table td {
+    padding: 0 0.5em 0 0;
+  }
+</style>
+
+{% for provider in providers %}
+  <h2>{{ provider.provider }}</h2>
+  <p>Credits remaining: {{ "{:,}".format(provider.models[0].credits_remaining) }}</p>
+  <table>
+    <thead>
+      <tr>
+        <th>Model</th>
+        <th>Tokens remaining</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for allowance in provider.models %}
+        <tr>
+          <td>{{ allowance.model_id }}</td>
+          <td>{{ "{:,}".format(allowance.tokens_remaining) }}</td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+{% endfor %}
+
+{% endblock %}
