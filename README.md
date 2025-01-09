@@ -17,72 +17,88 @@ datasette install datasette-llm-usage
 ```
 ## Usage
 
-This plugin adds functionality to track and manage LLM token usage in Datasette. It creates two tables.
+This plugin adds functionality to track and manage LLM token usage in Datasette. It creates several tables.
 
-- `_llm_usage`: Tracks usage of LLM tokens
-- `_llm_allowance`: Manages credit allowances for LLM usage
+- `_llm_usage`: Records usage of LLM models, one row per prompt executed
+- `_llm_usage_allowance`: Tracks the remaining credits for each provider
+- `_llm_usage_provider`: LLM providers such as OpenAI and Anthropic
+- `_llm_usage_model`: LLM models such as `gpt-4o` and `claude-3.5-sonnet`
 
 ### Configuration
 
 By default the tables are created in the internal database passed to Datasette using `--internal internal.db`. You can change that by setting the following in your Datasette plugin configuration:
 
-```json
-{
-    "plugins": {
-        "datasette-llm-usage": {
-            "database": "your_database_name"
-        }
-    }
-}
+```yaml
+plugins:
+  datasette-llm-usage:
+    database: your_database_name
 ```
+The internal database is recommended so users cannot reset their token allowances by modifying the tables directly.
 
-### Setting up allowances
+You'll need to configure the models that should be made available by this plugin, in addition to installing the relevant LLM plugins (such as `llm-gemini`).
 
-Before using LLM models, you need to set up an allowance in the `_llm_allowance` table. You can do this with SQL like:
-
-```sql
-insert into _llm_allowance (
-    id,
-    created,
-    credits_remaining,
-    daily_reset,
-    daily_reset_amount,
-    purpose
-) values (
-    1,
-    strftime('%s', 'now')
-    10000,
-    0,
-    0,
-    null
-);
+That configuration looks like this:
+```yaml
+plugins:
+  datasette-llm-usage:
+    allowances:
+    - provider: gemini
+      daily_reset_amount: 100000
+    models:
+    - provider: gemini
+      model_id: gemini-1.5-flash
+      tiers:
+      - max_tokens: 128000
+        input_cost: 7
+        output_cost: 30
+      - max_tokens: null
+        input_cost: 15
+        output_cost: 60
 ```
-The other columns are not yet used.
+This defines a single model, `gemini-1.5-flash`, from a single provider, `gemini`.
+
+The `daily_reset_amount` is the number of credits that will be made available for the specified provider each day.
+
+In tis example prompts below 128,000 input tokens are changed at 7 credits per input token and 30 credits per output token, and prompts above 128,000 input tokens are charged at 15 credits per input token and 60 credits per output token.
+
+A credit is worth 10,000th of a cent. The easier way to think about these values is in terms of cents-per-million tokens. For Gemini 1.5 Flash those values are:
+
+- $0.07/million input tokens
+- $0.3/million output tokens
+- $0.15/million input tokens above 128,000 tokens
+- $0.6/million output tokens above 128,000 tokens
+
+Which translates to the 7/30 and 15/60 credit values shown above.
 
 ### Using the LLM wrapper
 
 The plugin provides an `LLM` class that wraps the `llm` library to track token usage:
 
 ```python
-from datasette_llm_usage import LLM
+from datasette_llm_usage import LLM, TokensExhausted
 
 llm = LLM(datasette)
 
 # Get available models
-models = llm.get_async_models()
+models = await llm.get_async_models()
 
 # Get a specific model
-model = llm.get_async_model("gpt-4o-mini", purpose="my_purpose")
+model = await llm.get_async_model("gpt-4o-mini", purpose="my_purpose")
 
 # Use the model
-response = await model.prompt("Your prompt here")
-text = await response.text()
+try:
+    response = await model.prompt("Your prompt here")
+    text = await response.text()
+except TokensExhausted:
+    print("Tokens exhausted")
 ```
-Usage will be automatically recorded.
+If the number of available tokens for the model is exceeded, the `model.prompt()` method will raise a `TokensExhausted` exception
+
+Token usage will be automatically recorded in the tables documented above.
 
 ### Built-in endpoint
 
-The plugin provides a simple demo endpoint at `/-/llm-usage-simple-prompt` that requires authentication and uses the gpt-4o-mini model.
+The plugin provides a simple demo endpoint at `/-/llm-usage-simple-prompt` that requires authentication and allows a single prompt to be executed against a selected model.
 
 ### Supported Models and Pricing
 

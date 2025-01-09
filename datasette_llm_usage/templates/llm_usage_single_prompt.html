@@ -21,6 +21,10 @@
   <input type="hidden" name="csrftoken" value="{{ csrftoken() }}">
 </form>
 
+{% if error %}
+  <p style="color: red;">{{ error }}</p>
+{% endif %}
+
 {% if prompt_response %}
 <style>
   dl {
