@@ -4,7 +4,6 @@ from datasette import hookimpl, Response
 from datasette_llm_usage.migrations import migration
 from sqlite_utils import Database
 import time
-from typing import Optional
 
 
 async def get_database(datasette, migrate=False):
