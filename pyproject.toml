@@ -11,7 +11,7 @@ classifiers=[
 requires-python = ">=3.10"
 dependencies = [
     "datasette>=1.0a21",
-    "llm>=0.19",
+    "llm>=0.26",
     "sqlite-migrate"
 ]
 
