@@ -96,17 +96,9 @@ Different models have different input and output token costs.
 
 ## Development
 
-To set up this plugin locally, first checkout the code. Then create a new virtual environment:
+Clone this repo and run the tests:
+
 ```bash
 cd datasette-llm-usage
-python -m venv venv
-source venv/bin/activate
-```
-Now install the dependencies and test dependencies:
-```bash
-pip install -e '.[test]'
-```
-To run the tests:
-```bash
-python -m pytest
+uv run pytest
 ```
