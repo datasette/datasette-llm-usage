@@ -1,6 +1,6 @@
 [project]
 name = "datasette-llm-usage"
-version = "0.1a2"
+version = "0.2a0"
 description = "Track usage of LLM tokens in a SQLite table"
 readme = "README.md"
 authors = [{name = "Simon Willison"}]
