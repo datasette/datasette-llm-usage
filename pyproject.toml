@@ -11,7 +11,7 @@ classifiers=[
 requires-python = ">=3.10"
 dependencies = [
     "datasette>=1.0a21",
-    "datasette-llm",
+    "datasette-llm>=0.1a5",
     "sqlite-migrate"
 ]
 
@@ -30,10 +30,6 @@ llm_usage = "datasette_llm_usage"
 
 [dependency-groups]
 dev = ["pytest", "pytest-asyncio", "llm-echo>=0.3"]
-
-[tool.uv.sources]
-datasette-llm = { path = "/Users/simon/dev/scratch/datasette-llm" }
-llm-echo = { path = "/Users/simon/dev/scratch/llm-echo" }
 
 [tool.uv.build-backend]
 module-root = ""
