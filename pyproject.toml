@@ -11,13 +11,13 @@ classifiers=[
 requires-python = ">=3.10"
 dependencies = [
     "datasette>=1.0a21",
-    "llm>=0.19",
+    "datasette-llm>=0.1a5",
     "sqlite-migrate"
 ]
 
 [build-system]
-requires = ["setuptools"]
-build-backend = "setuptools.build_meta"
+requires = ["uv_build>=0.9.18,<0.12.0"]
+build-backend = "uv_build"
 
 [project.urls]
 Homepage = "https://github.com/datasette/datasette-llm-usage"
@@ -28,8 +28,11 @@ CI = "https://github.com/datasette/datasette-llm-usage/actions"
 [project.entry-points.datasette]
 llm_usage = "datasette_llm_usage"
 
-[project.optional-dependencies]
-test = ["pytest", "pytest-asyncio"]
+[dependency-groups]
+dev = ["pytest", "pytest-asyncio", "llm-echo>=0.3"]
+
+[tool.uv.build-backend]
+module-root = ""
 
 [tool.pytest.ini_options]
 asyncio_mode = "strict"

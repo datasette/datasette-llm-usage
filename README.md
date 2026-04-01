@@ -7,8 +7,6 @@
 
 Track usage of LLM tokens in a SQLite table
 
-This is a **very early alpha**.
-
 ## Installation
 
 Install this plugin in the same environment as Datasette.
@@ -17,10 +15,10 @@ datasette install datasette-llm-usage
 ```
 ## Usage
 
-This plugin adds functionality to track and manage LLM token usage in Datasette. It creates two tables.
+This plugin tracks LLM token usage in Datasette via the [datasette-llm](https://github.com/datasette/datasette-llm) `llm_prompt_context` hook. It creates two tables:
 
-- `_llm_usage`: Tracks usage of LLM tokens
-- `_llm_allowance`: Manages credit allowances for LLM usage
+- `llm_usage`: Tracks token usage per request (model, purpose, actor, input/output tokens)
+- `llm_usage_prompt_log`: Optionally logs full prompts and responses
 
 ### Configuration
 
@@ -36,77 +34,27 @@ By default the tables are created in the internal database passed to Datasette u
 }
 ```
 
-### Setting up allowances
+To enable full prompt and response logging, set `log_prompts` to `true`:
 
-Before using LLM models, you need to set up an allowance in the `_llm_allowance` table. You can do this with SQL like:
-
-```sql
-insert into _llm_allowance (
-    id,
-    created,
-    credits_remaining,
-    daily_reset,
-    daily_reset_amount,
-    purpose
-) values (
-    1,
-    strftime('%s', 'now')
-    10000,
-    0,
-    0,
-    null
-);
+```json
+{
+    "plugins": {
+        "datasette-llm-usage": {
+            "log_prompts": true
+        }
+    }
+}
 ```
-The other columns are not yet used.
-
-### Using the LLM wrapper
-
-The plugin provides an `LLM` class that wraps the `llm` library to track token usage:
-
-```python
-from datasette_llm_usage import LLM
-
-llm = LLM(datasette)
-
-# Get available models
-models = llm.get_async_models()
-
-# Get a specific model
-model = llm.get_async_model("gpt-4o-mini", purpose="my_purpose")
-
-# Use the model
-response = await model.prompt("Your prompt here")
-text = await response.text()
-```
-Usage will be automatically recorded.
 
 ### Built-in endpoint
 
 The plugin provides a simple demo endpoint at `/-/llm-usage-simple-prompt` that requires authentication and uses the gpt-4o-mini model.
 
-### Supported Models and Pricing
-
-The plugin includes pricing information for various models including:
-
-- Gemini models (1.5-flash, 1.5-pro)
-- Claude models (3.5-sonnet, 3-opus, 3-haiku)
-- GPT models (gpt-4o, gpt-4o-mini, o1-preview, o1-mini)
-
-Different models have different input and output token costs.
-
 ## Development
 
-To set up this plugin locally, first checkout the code. Then create a new virtual environment:
+Clone this repo and run the tests:
+
 ```bash
 cd datasette-llm-usage
-python -m venv venv
-source venv/bin/activate
-```
-Now install the dependencies and test dependencies:
-```bash
-pip install -e '.[test]'
-```
-To run the tests:
-```bash
-python -m pytest
+uv run pytest
 ```
