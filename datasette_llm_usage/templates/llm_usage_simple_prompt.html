@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block title %}Simple prompt{% endblock %}
+
+{% block content %}
+<h1>Simple prompt</h1>
+<form method="get">
+    <p>
+        <label for="model">Model</label><br>
+        <select name="model" id="model">
+            {% for model_id in models %}
+            <option value="{{ model_id }}" {% if model_id == selected_model %}selected{% endif %}>{{ model_id }}</option>
+            {% endfor %}
+        </select>
+    </p>
+    <p>
+        <label for="prompt">Prompt</label><br>
+        <textarea name="prompt" id="prompt" rows="4" cols="60">{{ prompt_text or "" }}</textarea>
+    </p>
+    <p><input type="submit" value="Submit"></p>
+</form>
+{% if response_text %}
+<h2>Response</h2>
+<pre style="white-space: pre-wrap;">{{ response_text }}</pre>
+<p><strong>Input tokens:</strong> {{ input_tokens }} | <strong>Output tokens:</strong> {{ output_tokens }}</p>
+{% endif %}
+{% endblock %}

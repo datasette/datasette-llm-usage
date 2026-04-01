@@ -1,6 +1,8 @@
 from __future__ import annotations
 from contextlib import asynccontextmanager
 from datasette import hookimpl, Response
+from datasette.permissions import Action
+from datasette.utils.asgi import Forbidden
 from datasette_llm_usage.migrations import migration
 from sqlite_utils import Database
 import json
@@ -62,7 +64,11 @@ def llm_prompt_context(datasette, model_id, prompt, purpose, actor):
                 tool_calls_json = (
                     json.dumps(
                         [
-                            {"name": tc.name, "arguments": tc.arguments, "tool_call_id": tc.tool_call_id}
+                            {
+                                "name": tc.name,
+                                "arguments": tc.arguments,
+                                "tool_call_id": tc.tool_call_id,
+                            }
                             for tc in tool_calls
                         ]
                     )
@@ -72,7 +78,11 @@ def llm_prompt_context(datasette, model_id, prompt, purpose, actor):
                 tool_results_json = (
                     json.dumps(
                         [
-                            {"name": tr.name, "output": tr.output, "tool_call_id": tr.tool_call_id}
+                            {
+                                "name": tr.name,
+                                "output": tr.output,
+                                "tool_call_id": tr.tool_call_id,
+                            }
                             for tr in response.prompt.tool_results
                         ]
                     )
@@ -108,25 +118,50 @@ def llm_prompt_context(datasette, model_id, prompt, purpose, actor):
 
 
 async def llm_usage_simple_prompt(datasette, request):
-    if not request.actor:
-        return Response.text("Not logged in", status=403)
+    if not await datasette.allowed(
+        actor=request.actor, action="llm-usage-simple-prompt"
+    ):
+        raise Forbidden("Permission denied")
     from datasette_llm import LLM
 
-    llm = LLM(datasette)
+    llm_instance = LLM(datasette)
+    all_models = await llm_instance.models(purpose="simple_prompt")
+    model_ids = [m.model_id for m in all_models]
+
     prompt_text = request.args.get("prompt")
-    if not prompt_text:
-        return Response.html("<form><input name=prompt><button>Submit</button></form>")
-    model = await llm.model("gpt-4o-mini", purpose="simple_prompt", actor=request.actor)
-    response = await model.prompt(prompt_text)
-    text = await response.text()
-    usage = await response.usage()
-    return Response.json(
-        {
-            "text": text,
-            "input_tokens": usage.input,
-            "output_tokens": usage.output,
-        }
+    selected_model = request.args.get("model") or (model_ids[0] if model_ids else None)
+    context = {
+        "models": model_ids,
+        "selected_model": selected_model,
+        "prompt_text": prompt_text,
+    }
+
+    if prompt_text and selected_model:
+        model = await llm_instance.model(
+            selected_model, purpose="simple_prompt", actor=request.actor
+        )
+        response = await model.prompt(prompt_text)
+        text = await response.text()
+        usage = await response.usage()
+        context["response_text"] = text
+        context["input_tokens"] = usage.input
+        context["output_tokens"] = usage.output
+
+    return Response.html(
+        await datasette.render_template(
+            "llm_usage_simple_prompt.html", context=context, request=request
+        )
     )
+
+
+@hookimpl
+def register_actions(datasette):
+    return [
+        Action(
+            name="llm-usage-simple-prompt",
+            description="Access the simple prompt endpoint",
+        ),
+    ]
 
 
 @hookimpl

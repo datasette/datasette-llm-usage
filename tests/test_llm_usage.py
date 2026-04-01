@@ -1,4 +1,7 @@
 from datasette.app import Datasette
+from datasette import hookimpl
+from datasette.permissions import PermissionSQL
+from datasette.plugins import pm
 from datasette_llm import LLM
 import json
 import pytest
@@ -175,3 +178,47 @@ async def test_tool_calls_logged(tmpdir):
     assert len(tool_results) == 1
     assert tool_results[0]["name"] == "example"
     assert "Example output for test" in tool_results[0]["output"]
+
+
+@pytest.mark.asyncio
+async def test_simple_prompt_permission_denied(tmpdir):
+    internal = tmpdir / "internal.db"
+    datasette = Datasette(internal=str(internal))
+    await datasette.invoke_startup()
+    # No actor at all
+    response = await datasette.client.get("/-/llm-usage-simple-prompt")
+    assert response.status_code == 403
+    # Actor without permission
+    response = await datasette.client.get(
+        "/-/llm-usage-simple-prompt",
+        cookies={"ds_actor": datasette.sign({"a": {"id": "user1"}}, "actor")},
+    )
+    assert response.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_simple_prompt_permission_allowed(tmpdir):
+    internal = tmpdir / "internal.db"
+
+    class AllowPromptPlugin:
+        __name__ = "AllowPromptPlugin"
+
+        @hookimpl
+        def permission_resources_sql(self, datasette, actor, action):
+            if action == "llm-usage-simple-prompt":
+                return PermissionSQL.allow(reason="test")
+
+    plugin = AllowPromptPlugin()
+    pm.register(plugin)
+    try:
+        datasette = Datasette(internal=str(internal))
+        await datasette.invoke_startup()
+        response = await datasette.client.get(
+            "/-/llm-usage-simple-prompt",
+            cookies={"ds_actor": datasette.sign({"a": {"id": "user1"}}, "actor")},
+        )
+        assert response.status_code == 200
+        assert "<h1>Simple prompt</h1>" in response.text
+        assert "<select" in response.text
+    finally:
+        pm.unregister(plugin)
