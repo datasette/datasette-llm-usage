@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from datasette import hookimpl, Response
 from datasette_llm_usage.migrations import migration
 from sqlite_utils import Database
+import json
 import time
 
 
@@ -57,10 +58,35 @@ def llm_prompt_context(datasette, model_id, prompt, purpose, actor):
             plugin_config = datasette.plugin_config("datasette-llm-usage") or {}
             if plugin_config.get("log_prompts"):
                 response_text = await response.text()
+                tool_calls = await response.tool_calls()
+                tool_calls_json = (
+                    json.dumps(
+                        [
+                            {"name": tc.name, "arguments": tc.arguments, "tool_call_id": tc.tool_call_id}
+                            for tc in tool_calls
+                        ]
+                    )
+                    if tool_calls
+                    else None
+                )
+                tool_results_json = (
+                    json.dumps(
+                        [
+                            {"name": tr.name, "output": tr.output, "tool_call_id": tr.tool_call_id}
+                            for tr in response.prompt.tool_results
+                        ]
+                    )
+                    if response.prompt.tool_results
+                    else None
+                )
                 await db.execute_write(
                     """
-                    insert into llm_usage_prompt_log (created, model, purpose, actor_id, prompt, response, input_tokens, output_tokens)
-                    values (:created, :model, :purpose, :actor_id, :prompt, :response, :input_tokens, :output_tokens)
+                    insert into llm_usage_prompt_log
+                        (created, model, purpose, actor_id, prompt, response,
+                         input_tokens, output_tokens, tool_calls, tool_results)
+                    values
+                        (:created, :model, :purpose, :actor_id, :prompt, :response,
+                         :input_tokens, :output_tokens, :tool_calls, :tool_results)
                     """,
                     {
                         "created": int(time.time() * 1000),
@@ -71,10 +97,12 @@ def llm_prompt_context(datasette, model_id, prompt, purpose, actor):
                         "response": response_text,
                         "input_tokens": input_tokens,
                         "output_tokens": output_tokens,
+                        "tool_calls": tool_calls_json,
+                        "tool_results": tool_results_json,
                     },
                 )
 
-        await result.response.on_done(on_complete)
+        await result.on_response_done(on_complete)
 
     return usage_tracker
 

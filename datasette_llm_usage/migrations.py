@@ -65,3 +65,9 @@ def rename_tables(db):
         db.rename_table("_llm_usage", "llm_usage")
     if "_llm_prompt_log" in db.table_names():
         db.rename_table("_llm_prompt_log", "llm_usage_prompt_log")
+
+
+@migration()
+def add_tool_columns_to_prompt_log(db):
+    db.execute("alter table llm_usage_prompt_log add column tool_calls text")
+    db.execute("alter table llm_usage_prompt_log add column tool_results text")
