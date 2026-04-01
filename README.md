@@ -46,9 +46,11 @@ To enable full prompt and response logging, set `log_prompts` to `true`:
 }
 ```
 
-### Built-in endpoint
+### Prompt testing tool
 
-The plugin provides a simple demo endpoint at `/-/llm-usage-simple-prompt` that requires authentication and uses the gpt-4o-mini model.
+The plugin also provides a simple demo page at `/-/llm-usage-simple-prompt` which can be used to execute prompts for testing.
+
+That page requires the user to have the `llm-usage-simple-prompt` permission.
 
 ## Development
 
