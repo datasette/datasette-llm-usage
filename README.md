@@ -5,7 +5,7 @@
 [![Tests](https://github.com/datasette/datasette-llm-usage/actions/workflows/test.yml/badge.svg)](https://github.com/datasette/datasette-llm-usage/actions/workflows/test.yml)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](https://github.com/datasette/datasette-llm-usage/blob/main/LICENSE)
 
-Track usage of LLM tokens in a SQLite table
+Track usage of LLM tokens in a SQLite table, optionally log all prompts
 
 ## Installation
 
